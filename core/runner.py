@@ -361,6 +361,15 @@ def run_file_mode(base_output="output", image_path="", case_info=None, progress_
     if progress_cb:
         progress_cb("init", 5, f"Opening image: {os.path.basename(image_path)}...")
 
+    ext = os.path.splitext(image_path)[1].lower()
+    if ext in [".ad1", ".ad2"]:
+        return _run_ad1_mode(output_dir, image_path, case_info, logger, progress_cb)
+
+    try:
+        import pytsk3
+    except ImportError:
+        raise RuntimeError("The 'pytsk3' library is required to analyze raw disk images (.E01, .dd, .raw). Please install it via: pip install pytsk3 pyewf-wheels (or use .ad1 images which run natively).")
+
     image_info = collect_image_info(image_path)
     export_json(output_dir, "image_info.json", image_info)
 
@@ -598,4 +607,113 @@ def run_file_mode(base_output="output", image_path="", case_info=None, progress_
     if progress_cb:
         progress_cb("completed", 100, f"Completed image analysis! Saved to: {output_dir}")
     logger.info(f"Completed FILE mode. Output: {output_dir}")
+    return output_dir
+
+
+def _run_ad1_mode(output_dir, image_path, case_info, logger, progress_cb):
+    from collectors.image.image_info import collect_image_info
+    from collectors.image.ad1_reader import extract_ad1_container
+    from collectors.image.timeline_builder import build_timeline
+    from collectors.image.findings_builder import build_findings
+    from exporters.excel_exporter import generate_excel_xml_report
+    from exporters.html_report import write_html_report
+    from exporters.report_writer import write_summary_report
+    from core.manifest import generate_evidence_manifest
+
+    logger.info(f"Extracting AccessData AD1 logical container: {image_path}")
+    if progress_cb:
+        progress_cb("ad1_start", 10, "Extracting AD1 forensic container...")
+
+    image_info = collect_image_info(image_path)
+    export_json(output_dir, "image_info.json", image_info)
+
+    extract_dir = os.path.join(output_dir, "extracted_ad1_artifacts")
+    ad1_res = extract_ad1_container(image_path, extract_dir, progress_cb=progress_cb)
+
+    artifacts = ad1_res.get("artifacts", [])
+    export_json(output_dir, "ad1_artifacts_carved.json", artifacts)
+
+    # Read extracted bash history
+    shell_history = []
+    bash_hist_path = os.path.join(extract_dir, "bash_history.txt")
+    if os.path.isfile(bash_hist_path):
+        with open(bash_hist_path, "r", errors="ignore") as f:
+            for idx, line in enumerate(f, 1):
+                cmd = line.strip()
+                if cmd:
+                    shell_history.append({"line_number": idx, "command": cmd, "user": "root"})
+        export_json(output_dir, "linux_shell_history.json", shell_history)
+        export_csv(output_dir, "linux_shell_history.csv", shell_history)
+
+    # Read carved users
+    users = []
+    passwd_path = os.path.join(extract_dir, "passwd.txt")
+    if os.path.isfile(passwd_path):
+        with open(passwd_path, "r", errors="ignore") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) >= 6:
+                    users.append({
+                        "username": parts[0],
+                        "uid": parts[2],
+                        "gid": parts[3],
+                        "home": parts[5],
+                        "shell": parts[6] if len(parts) > 6 else ""
+                    })
+        export_json(output_dir, "users.json", users)
+        export_csv(output_dir, "users.csv", users)
+
+    # Read carved SSH keys
+    ssh_artifacts = [a for a in artifacts if a.get("type") == "SSH Private Key"]
+    if ssh_artifacts:
+        export_json(output_dir, "linux_ssh_artifacts.json", ssh_artifacts)
+        export_csv(output_dir, "linux_ssh_artifacts.csv", ssh_artifacts)
+
+    # Build Timeline & Findings
+    timeline = build_timeline(linux_shell_history=shell_history, linux_ssh_artifacts=ssh_artifacts)
+    export_json(output_dir, "timeline.json", timeline)
+    export_csv(output_dir, "timeline.csv", timeline)
+
+    findings = build_findings(linux_shell_history=shell_history, linux_ssh_artifacts=ssh_artifacts)
+    export_json(output_dir, "findings.json", findings)
+    export_csv(output_dir, "findings.csv", findings)
+
+    # Generate multi-sheet Excel report
+    generate_excel_xml_report(output_dir, {
+        "Executive Summary": {
+            "Container": os.path.basename(image_path),
+            "Format": "AccessData AD1 Logical Container",
+            "Size": f"{os.path.getsize(image_path) // (1024*1024)} MB",
+            "Extracted Artifacts": len(artifacts),
+            "Shell History Commands": len(shell_history),
+            "Users Identified": len(users),
+            "Threat Findings": len(findings),
+            "Timeline Events": len(timeline),
+        },
+        "Threat Findings": findings,
+        "Master Timeline": timeline,
+        "Shell History": shell_history,
+        "Users & Accounts": users,
+        "Carved Artifacts": artifacts,
+    })
+
+    # Summary and HTML Report
+    write_summary_report(
+        output_dir=output_dir,
+        mode="file",
+        summary_data={
+            "image_info": image_info,
+            "case_metadata": case_info,
+            "timeline_count": len(timeline),
+            "findings_count": len(findings),
+            "artifacts_count": len(artifacts),
+        }
+    )
+
+    write_html_report(output_dir, case_info=case_info)
+    generate_evidence_manifest(output_dir, case_info=case_info)
+
+    if progress_cb:
+        progress_cb("completed", 100, f"Completed AD1 triage! Saved to: {output_dir}")
+    logger.info(f"Completed AD1 file mode. Output: {output_dir}")
     return output_dir

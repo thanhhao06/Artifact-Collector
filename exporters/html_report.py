@@ -60,9 +60,17 @@ def write_html_report(output_dir, case_info=None):
 
     all_artifacts = []
 
+    RAW_BINARY_EXTS = {".raw", ".dd", ".img", ".bin", ".iso", ".ad1", ".ad2", ".e01", ".ex01", ".vmdk", ".vhd", ".vhdx", ".sqlite", ".db", ".dat", ".evtx", ".pf", ".sys"}
+
     for rel_name, full_path in files:
-        ftype, content = read_file_content(full_path)
         size_bytes = os.path.getsize(full_path)
+        ext = os.path.splitext(full_path)[1].lower()
+
+        if ext in RAW_BINARY_EXTS or size_bytes > 5 * 1024 * 1024:
+            ftype = "binary"
+            content = f"Binary forensic artifact ({_format_size(size_bytes)}). Available on disk at: {rel_name}"
+        else:
+            ftype, content = read_file_content(full_path)
         
         artifact_entry = {
             "name": rel_name,
@@ -71,7 +79,7 @@ def write_html_report(output_dir, case_info=None):
             "size_formatted": _format_size(size_bytes),
             "size_bytes": size_bytes,
             "data": content,
-            "count": len(content) if isinstance(content, list) else (len(content.keys()) if isinstance(content, dict) else (len(content.splitlines()) if ftype == "text" else 0))
+            "count": len(content) if isinstance(content, list) else (len(content.keys()) if isinstance(content, dict) else (len(str(content).splitlines()) if ftype == "text" else 1))
         }
         all_artifacts.append(artifact_entry)
 
