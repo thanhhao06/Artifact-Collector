@@ -287,6 +287,19 @@ class ForensicGUI:
         self.status_label.config(text=f"{percent}% - {message}")
         self.log_message(message)
 
+    def _enable_action_buttons(self, enable=True):
+        state_str = "normal" if enable else "disabled"
+        state_ttk = ["!disabled"] if enable else ["disabled"]
+        for btn in [self.btn_open_report, self.btn_open_folder]:
+            try:
+                btn.state(state_ttk)
+            except Exception:
+                pass
+            try:
+                btn.config(state=state_str)
+            except Exception:
+                pass
+
     def _start_triage(self):
         if self.is_running:
             return
@@ -317,8 +330,7 @@ class ForensicGUI:
 
         self.is_running = True
         self.btn_run.config(state="disabled")
-        self.btn_open_report.config(state="disabled")
-        self.btn_open_folder.config(state="disabled")
+        self._enable_action_buttons(False)
         self.progress_bar["value"] = 0
         self.log_message(f"Starting {mode.upper()} triage session for Case: {case_id}...")
 
@@ -331,6 +343,7 @@ class ForensicGUI:
         thread.start()
 
     def _run_worker(self, mode, base_output, case_info, selected_mods, image_path):
+        out = ""
         try:
             if mode == "local":
                 out = run_local_mode(
@@ -350,47 +363,100 @@ class ForensicGUI:
             self.latest_output_dir = out
             self.root.after(0, self._on_triage_success, out)
         except Exception as e:
-            self.root.after(0, self._on_triage_error, str(e))
+            self.root.after(0, self._on_triage_error, str(e), out)
 
     def _on_triage_success(self, out_dir):
         self.is_running = False
         self.btn_run.config(state="normal")
-        self.btn_open_report.config(state="normal")
-        self.btn_open_folder.config(state="normal")
+        self._enable_action_buttons(True)
         self.progress_bar["value"] = 100
         self.status_label.config(text="Completed Successfully!")
         self.log_message(f"Triage successfully finished! Output generated at: {out_dir}")
-        messagebox.showinfo("Success", f"Forensic triage completed successfully!\n\nOutput saved to:\n{out_dir}")
+        messagebox.showinfo("Success", f"Forensic triage completed successfully!\n\nOutput saved to:\n{out_dir}\n\nYou can click 'Open HTML Report' or 'Open Output Folder' to review results.")
 
-    def _on_triage_error(self, err_msg):
+    def _on_triage_error(self, err_msg, out_dir=""):
         self.is_running = False
         self.btn_run.config(state="normal")
+        if out_dir and os.path.isdir(out_dir):
+            self.latest_output_dir = out_dir
+            self._enable_action_buttons(True)
         self.status_label.config(text="Error occurred.")
         self.log_message(f"ERROR: {err_msg}")
         messagebox.showerror("Execution Error", f"An error occurred during triage:\n{err_msg}")
 
+    def _is_wsl(self):
+        if sys.platform.startswith("linux"):
+            if os.path.exists("/proc/version"):
+                try:
+                    with open("/proc/version", "r") as f:
+                        if "microsoft" in f.read().lower():
+                            return True
+                except Exception:
+                    pass
+            return "WSL_DISTRO_NAME" in os.environ or "WSL_INTEROP" in os.environ
+        return False
+
+    def _open_cross_platform(self, target_path, is_dir=False):
+        abs_path = os.path.abspath(target_path)
+        if self._is_wsl():
+            try:
+                win_path = subprocess.check_output(["wslpath", "-w", abs_path], text=True, stderr=subprocess.DEVNULL).strip()
+                if is_dir:
+                    subprocess.Popen(["explorer.exe", win_path])
+                else:
+                    subprocess.Popen(["cmd.exe", "/c", "start", "", win_path])
+                return True
+            except Exception as e:
+                self.log_message(f"WSL open notice: {e}")
+
+        if sys.platform == "win32":
+            try:
+                os.startfile(abs_path)
+                return True
+            except Exception:
+                if not is_dir:
+                    webbrowser.open(f"file://{abs_path}")
+                    return True
+        elif sys.platform == "darwin":
+            try:
+                subprocess.Popen(["open", abs_path])
+                return True
+            except Exception:
+                pass
+        else:
+            try:
+                if is_dir:
+                    subprocess.Popen(["xdg-open", abs_path])
+                else:
+                    if not webbrowser.open(f"file://{abs_path}"):
+                        subprocess.Popen(["xdg-open", abs_path])
+                return True
+            except Exception:
+                pass
+        return False
+
     def _open_html_report(self):
         if not self.latest_output_dir:
+            messagebox.showinfo("Notice", "No triage output directory found yet. Run triage first.")
             return
         report_path = os.path.join(self.latest_output_dir, "report.html")
         if os.path.isfile(report_path):
-            webbrowser.open(f"file://{os.path.abspath(report_path)}")
+            self.log_message(f"Opening HTML Report: {report_path}")
+            success = self._open_cross_platform(report_path, is_dir=False)
+            if not success:
+                messagebox.showwarning("Open Failed", f"Could not launch browser automatically.\nReport file is at:\n{report_path}")
         else:
             messagebox.showwarning("Report Not Found", f"report.html was not found in:\n{self.latest_output_dir}")
 
     def _open_output_folder(self):
         if not self.latest_output_dir or not os.path.isdir(self.latest_output_dir):
+            messagebox.showinfo("Notice", "Output directory does not exist yet. Run triage first.")
             return
         abs_path = os.path.abspath(self.latest_output_dir)
-        try:
-            if sys.platform == "win32":
-                os.startfile(abs_path)
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", abs_path])
-            else:
-                subprocess.Popen(["xdg-open", abs_path])
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not open directory: {e}")
+        self.log_message(f"Opening Output Directory: {abs_path}")
+        success = self._open_cross_platform(abs_path, is_dir=True)
+        if not success:
+            messagebox.showwarning("Open Failed", f"Could not open file manager automatically.\nFolder is located at:\n{abs_path}")
 
 
 def launch_gui():

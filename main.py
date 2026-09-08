@@ -11,19 +11,20 @@ BANNER = r"""
 /    |    \  | \/|  | |  ||  |   / __ \\  \___|  |   /_____/ \     \___(  <_> )  |_|  |_\  ___/\  \___|  | (  <_> )  | \/
 \____|__  /__|   |__| |__||__|  (____  /\___  >__|            \______  /\____/|____/____/\___  >\___  >__|  \____/|__|   
         \/                           \/     \/                       \/                   \/     \/                   
-                        >> Forensic Triage & Threat Intelligence Engine v2.0 <<
+                        >> Forensic Triage & Threat Intelligence Engine <<
 """
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Artifact Collector 2.0 - Advanced Forensic Triage Tool",
+        description="Artifact Collector - Advanced Forensic Triage Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Examples:\n"
                "  python main.py --gui\n"
                "  python main.py --mode local\n"
                "  python main.py --mode local --modules system,processes,network,persistence\n"
                "  python main.py --mode file --image evidence.E01 --case-id CASE-001\n"
+               "  python main.py --mode file --image evidence.ad1 --case-id CASE-002\n"
     )
     parser.add_argument(
         "--gui",
@@ -37,7 +38,7 @@ def parse_args():
     )
     parser.add_argument(
         "--image",
-        help="Path to disk image file (.E01, .dd, .raw) when using --mode file"
+        help="Path to forensic evidence or disk image (.E01, .ad1, .001, .d01, .dd, .raw, .vmdk, .vhd, etc.) when using --mode file"
     )
     parser.add_argument(
         "--output",
@@ -55,7 +56,7 @@ def parse_args():
     )
     parser.add_argument(
         "--examiner",
-        default=os.environ.get("USERNAME", "Investigator"),
+        default=os.environ.get("USER", os.environ.get("USERNAME", "Investigator")),
         help="Forensic examiner / investigator name"
     )
     parser.add_argument(

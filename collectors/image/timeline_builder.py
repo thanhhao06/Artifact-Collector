@@ -24,9 +24,26 @@ def build_timeline(**datasets):
         _append(rows, item.get("timestamp"), item.get("source_file"), "browser_history", item.get("username"), item.get("url"), {"browser": item.get("browser", "")})
 
     for item in datasets.get("linux_shell_history", []):
-        for line in str(item.get("content", "")).splitlines():
-            if line.strip():
-                _append(rows, "", item.get("source"), "shell_history", item.get("username"), line.strip())
+        cmd = str(item.get("command") or item.get("content") or "").strip()
+        usr = item.get("user") or item.get("username") or "root"
+        line_num = item.get("line_number")
+        src = item.get("source") or "bash_history"
+        ts = item.get("timestamp") or ""
+        if cmd:
+            for line in cmd.splitlines():
+                if line.strip():
+                    extra = {"line_number": line_num} if line_num is not None else None
+                    _append(rows, ts, src, "shell_history", usr, line.strip(), extra)
+
+    for item in datasets.get("ad1_artifacts", []):
+        art_type = item.get("type", "carved_artifact")
+        name = item.get("name", "")
+        path = item.get("path", "")
+        _append(rows, item.get("created") or item.get("modified") or "", path or name, "carved_artifact", "system", f"Carved {art_type}: {name}")
+
+    for item in datasets.get("users", []):
+        usr = item.get("username", "")
+        _append(rows, "", "/etc/passwd", "user_account", usr, f"Account: {usr} (UID: {item.get('uid')}, Shell: {item.get('shell')}, Home: {item.get('home')})")
 
     for item in datasets.get("linux_cron", []):
         preview = " | ".join([line.strip() for line in str(item.get("content", "")).splitlines()[:3] if line.strip()])

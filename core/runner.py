@@ -631,6 +631,7 @@ def _run_ad1_mode(output_dir, image_path, case_info, logger, progress_cb):
     ad1_res = extract_ad1_container(image_path, extract_dir, progress_cb=progress_cb)
 
     artifacts = ad1_res.get("artifacts", [])
+    browser_urls = ad1_res.get("browser_urls", [])
     export_json(output_dir, "ad1_artifacts_carved.json", artifacts)
 
     # Read extracted bash history
@@ -669,12 +670,29 @@ def _run_ad1_mode(output_dir, image_path, case_info, logger, progress_cb):
         export_json(output_dir, "linux_ssh_artifacts.json", ssh_artifacts)
         export_csv(output_dir, "linux_ssh_artifacts.csv", ssh_artifacts)
 
+    # Export carved browser URLs if present
+    if browser_urls:
+        export_json(output_dir, "browser_history.json", browser_urls)
+        export_csv(output_dir, "browser_history.csv", browser_urls)
+
     # Build Timeline & Findings
-    timeline = build_timeline(linux_shell_history=shell_history, linux_ssh_artifacts=ssh_artifacts)
+    timeline = build_timeline(
+        linux_shell_history=shell_history,
+        linux_ssh_artifacts=ssh_artifacts,
+        ad1_artifacts=artifacts,
+        users=users,
+        browser_history=browser_urls
+    )
     export_json(output_dir, "timeline.json", timeline)
     export_csv(output_dir, "timeline.csv", timeline)
 
-    findings = build_findings(linux_shell_history=shell_history, linux_ssh_artifacts=ssh_artifacts)
+    findings = build_findings(
+        linux_shell_history=shell_history,
+        linux_ssh_artifacts=ssh_artifacts,
+        ad1_artifacts=artifacts,
+        users=users,
+        browser_history=browser_urls
+    )
     export_json(output_dir, "findings.json", findings)
     export_csv(output_dir, "findings.csv", findings)
 
@@ -694,6 +712,7 @@ def _run_ad1_mode(output_dir, image_path, case_info, logger, progress_cb):
         "Master Timeline": timeline,
         "Shell History": shell_history,
         "Users & Accounts": users,
+        "Browser History": browser_urls,
         "Carved Artifacts": artifacts,
     })
 

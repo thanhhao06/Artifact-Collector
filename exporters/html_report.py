@@ -44,34 +44,40 @@ def write_html_report(output_dir, case_info=None):
         for filename in sorted(filenames):
             path = os.path.join(root, filename)
             relative_name = os.path.relpath(path, output_dir).replace("\\", "/")
-            if relative_name == "report.html" or filename.startswith("."):
+            if relative_name == "report.html" or filename.startswith(".") or filename.endswith(".pyc") or filename.endswith("-wal") or filename.endswith("-shm") or filename.endswith("-journal"):
                 continue
             if os.path.isfile(path):
                 files.append((relative_name, path))
 
-    # Read key summary datasets for top dashboard
     system_info = {}
+    image_info = {}
     findings_data = []
     timeline_data = []
     processes_data = []
     network_data = []
-    usb_data = []
     manifest_data = {}
 
     all_artifacts = []
-
     RAW_BINARY_EXTS = {".raw", ".dd", ".img", ".bin", ".iso", ".ad1", ".ad2", ".e01", ".ex01", ".vmdk", ".vhd", ".vhdx", ".sqlite", ".db", ".dat", ".evtx", ".pf", ".sys"}
 
     for rel_name, full_path in files:
-        size_bytes = os.path.getsize(full_path)
+        if not os.path.isfile(full_path):
+            continue
+        try:
+            size_bytes = os.path.getsize(full_path)
+        except OSError:
+            continue
+
         ext = os.path.splitext(full_path)[1].lower()
 
         if ext in RAW_BINARY_EXTS or size_bytes > 5 * 1024 * 1024:
             ftype = "binary"
             content = f"Binary forensic artifact ({_format_size(size_bytes)}). Available on disk at: {rel_name}"
+            count = 1
         else:
             ftype, content = read_file_content(full_path)
-        
+            count = len(content) if isinstance(content, list) else (len(content.keys()) if isinstance(content, dict) else (len(str(content).splitlines()) if ftype == "text" else 1))
+
         artifact_entry = {
             "name": rel_name,
             "filename": os.path.basename(rel_name),
@@ -79,12 +85,14 @@ def write_html_report(output_dir, case_info=None):
             "size_formatted": _format_size(size_bytes),
             "size_bytes": size_bytes,
             "data": content,
-            "count": len(content) if isinstance(content, list) else (len(content.keys()) if isinstance(content, dict) else (len(str(content).splitlines()) if ftype == "text" else 1))
+            "count": count
         }
         all_artifacts.append(artifact_entry)
 
         if rel_name == "system_info.json" and isinstance(content, dict):
             system_info = content
+        elif rel_name == "image_info.json" and isinstance(content, dict):
+            image_info = content
         elif rel_name == "findings.json" and isinstance(content, list):
             findings_data = content
         elif rel_name == "timeline.json" and isinstance(content, list):
@@ -93,8 +101,6 @@ def write_html_report(output_dir, case_info=None):
             processes_data = content
         elif rel_name == "network_connections.json" and isinstance(content, list):
             network_data = content
-        elif rel_name == "usb_history.json" and isinstance(content, list):
-            usb_data = content
         elif rel_name == "manifest.json" and isinstance(content, dict):
             manifest_data = content
 
@@ -106,20 +112,14 @@ def write_html_report(output_dir, case_info=None):
     info_count = sum(1 for f in findings_data if f.get("severity") == "info")
     total_findings = len(findings_data)
 
-    target_host = system_info.get("hostname") or "Target System"
-    target_os = system_info.get("os_details", {}).get("windows_edition") or system_info.get("os") or "Unknown OS"
-    target_user = system_info.get("username") or "Current User"
-    uptime_str = system_info.get("uptime") or "N/A"
-    ram_str = system_info.get("memory", {}).get("total_ram_formatted") or "N/A"
-    ram_pct = system_info.get("memory", {}).get("ram_usage_percent") or 0
-    cpu_model = system_info.get("cpu", {}).get("model") or "CPU"
-    cpu_cores = system_info.get("cpu", {}).get("logical_cores") or 0
+    target_host = system_info.get("hostname") or image_info.get("image_name") or image_info.get("filename") or "Target Evidence"
+    target_os = system_info.get("os_details", {}).get("windows_edition") or system_info.get("os") or image_info.get("format") or "Forensic Evidence Image"
+    target_user = system_info.get("username") or case_info.get("examiner") or "Examiner"
 
     case_id = case_info.get("case_id") or manifest_data.get("case_metadata", {}).get("case_id") or "CASE-TRIAGE-01"
-    examiner = case_info.get("examiner") or manifest_data.get("case_metadata", {}).get("examiner") or "Forensic Examiner"
+    examiner = case_info.get("examiner") or manifest_data.get("case_metadata", {}).get("examiner") or "Azaki"
     evidence_id = case_info.get("evidence_id") or manifest_data.get("case_metadata", {}).get("evidence_id") or "EVID-001"
 
-    # Encode all artifacts into JSON string for high-speed client-side rendering
     artifacts_json = json.dumps(all_artifacts, ensure_ascii=False)
 
     html_content = f"""<!DOCTYPE html>
@@ -127,7 +127,7 @@ def write_html_report(output_dir, case_info=None):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Artifact Collector 2.0 - Forensic Triage Report [{html.escape(target_host)}]</title>
+    <title>Artifact Collector - Forensic Triage Report [{html.escape(target_host)}]</title>
     <style>
         :root {{
             --bg-base: #0a0e17;
@@ -210,7 +210,9 @@ def write_html_report(output_dir, case_info=None):
             border-radius: 10px;
             display: grid;
             place-items: center;
-            font-size: 20px;
+            font-size: 18px;
+            font-weight: 800;
+            color: #ffffff;
             box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
         }}
 
@@ -381,10 +383,6 @@ def write_html_report(output_dir, case_info=None):
             letter-spacing: 0.05em;
         }}
 
-        .kpi-icon {{
-            font-size: 20px;
-        }}
-
         .kpi-value {{
             font-size: 28px;
             font-weight: 900;
@@ -457,9 +455,6 @@ def write_html_report(output_dir, case_info=None):
             color: var(--text-primary);
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            display: flex;
-            align-items: center;
-            gap: 8px;
         }}
 
         .bar-chart-container {{
@@ -499,7 +494,7 @@ def write_html_report(output_dir, case_info=None):
         /* MAIN CONTENT & TABS */
         .workspace-layout {{
             display: grid;
-            grid-template-columns: 280px 1fr;
+            grid-template-columns: 290px 1fr;
             gap: 20px;
             min-height: 700px;
         }}
@@ -518,7 +513,7 @@ def write_html_report(output_dir, case_info=None):
             padding: 16px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
             height: fit-content;
             box-shadow: var(--shadow-lg);
         }}
@@ -526,7 +521,7 @@ def write_html_report(output_dir, case_info=None):
         .search-box {{
             position: relative;
             width: 100%;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
         }}
 
         .search-box input {{
@@ -561,7 +556,7 @@ def write_html_report(output_dir, case_info=None):
             color: var(--text-muted);
             font-weight: 800;
             letter-spacing: 0.05em;
-            margin: 10px 0 2px 6px;
+            margin: 12px 0 4px 6px;
         }}
 
         .tab-button {{
@@ -746,18 +741,6 @@ def write_html_report(output_dir, case_info=None):
             color: #38bdf8;
             white-space: nowrap !important;
             display: inline-block;
-        }}
-
-        .highlight-danger {{
-            color: var(--accent-red) !important;
-            font-weight: 700;
-            white-space: nowrap !important;
-        }}
-
-        .highlight-warning {{
-            color: var(--accent-yellow) !important;
-            font-weight: 700;
-            white-space: nowrap !important;
         }}
 
         .code-cell {{
@@ -969,29 +952,29 @@ def write_html_report(output_dir, case_info=None):
     <!-- TOP NAVBAR -->
     <header class="top-navbar">
         <div class="brand-section">
-            <div class="brand-logo">🔍</div>
+            <div class="brand-logo">DFIR</div>
             <div class="brand-text">
-                <h1>Artifact Collector 2.0</h1>
+                <h1>Artifact Collector</h1>
                 <p>Forensic Triage & Incident Response Dashboard</p>
             </div>
         </div>
 
         <div class="nav-actions">
-            <button class="btn-action spotlight-btn" onclick="openSpotlight()">⚡ Search (Ctrl+K)</button>
+            <button class="btn-action spotlight-btn" onclick="openSpotlight()">Search (Ctrl+K)</button>
             <span class="badge-live">{html.escape(target_host)}</span>
-            <button class="btn-action" onclick="toggleTheme()">🌓 Theme</button>
-            <button class="btn-action" onclick="window.print()">🖨️ Print / PDF</button>
+            <button class="btn-action" onclick="toggleTheme()">Theme</button>
+            <button class="btn-action" onclick="window.print()">Print / PDF</button>
         </div>
     </header>
 
     <!-- CASE BANNER -->
     <section class="case-banner">
         <div class="meta-item">
-            <span class="meta-label">Target Host</span>
+            <span class="meta-label">Evidence / Target</span>
             <span class="meta-value">{html.escape(target_host)} ({html.escape(target_user)})</span>
         </div>
         <div class="meta-item">
-            <span class="meta-label">Operating System</span>
+            <span class="meta-label">Format / OS</span>
             <span class="meta-value">{html.escape(target_os)}</span>
         </div>
         <div class="meta-item">
@@ -1016,7 +999,6 @@ def write_html_report(output_dir, case_info=None):
             <div class="kpi-card threat-card">
                 <div class="kpi-header">
                     <span class="kpi-title">Threat Findings</span>
-                    <span class="kpi-icon">🛡️</span>
                 </div>
                 <div class="kpi-value">{total_findings}</div>
                 <div class="severity-pills">
@@ -1030,74 +1012,31 @@ def write_html_report(output_dir, case_info=None):
 
             <div class="kpi-card">
                 <div class="kpi-header">
-                    <span class="kpi-title">Live Processes</span>
-                    <span class="kpi-icon">⚡</span>
+                    <span class="kpi-title">Artifact Datasets</span>
                 </div>
-                <div class="kpi-value">{len(processes_data)}</div>
+                <div class="kpi-value">{len(all_artifacts)}</div>
                 <div class="kpi-subtext">
-                    <span>RAM Used: {ram_str} ({ram_pct}%)</span>
-                </div>
-            </div>
-
-            <div class="kpi-card">
-                <div class="kpi-header">
-                    <span class="kpi-title">Network Sockets</span>
-                    <span class="kpi-icon">🌐</span>
-                </div>
-                <div class="kpi-value">{len(network_data)}</div>
-                <div class="kpi-subtext">
-                    <span>Uptime: {html.escape(uptime_str)}</span>
+                    <span>Evidence files collected</span>
                 </div>
             </div>
 
             <div class="kpi-card">
                 <div class="kpi-header">
                     <span class="kpi-title">Timeline Events</span>
-                    <span class="kpi-icon">⏳</span>
                 </div>
                 <div class="kpi-value">{len(timeline_data)}</div>
                 <div class="kpi-subtext">
-                    <span>Total Artifact Files: {len(all_artifacts)}</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- VISUAL ANALYTICS CHARTS -->
-        <section class="analytics-grid" id="analyticsSection">
-            <!-- Chart 1: Threat Severity Breakdown -->
-            <div class="chart-card">
-                <div class="chart-header">
-                    <span class="chart-title">🛡️ Threat Severity Breakdown</span>
-                    <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">{total_findings} Total</span>
-                </div>
-                <div class="bar-chart-container">
-                    <div class="bar-item">
-                        <div class="bar-label-row"><span>Critical</span><span>{crit_count}</span></div>
-                        <div class="bar-track"><div class="bar-fill" style="width: {(crit_count / max(total_findings, 1)) * 100}%; background: var(--accent-critical);"></div></div>
-                    </div>
-                    <div class="bar-item">
-                        <div class="bar-label-row"><span>High</span><span>{high_count}</span></div>
-                        <div class="bar-track"><div class="bar-fill" style="width: {(high_count / max(total_findings, 1)) * 100}%; background: var(--accent-red);"></div></div>
-                    </div>
-                    <div class="bar-item">
-                        <div class="bar-label-row"><span>Medium</span><span>{med_count}</span></div>
-                        <div class="bar-track"><div class="bar-fill" style="width: {(med_count / max(total_findings, 1)) * 100}%; background: var(--accent-yellow);"></div></div>
-                    </div>
-                    <div class="bar-item">
-                        <div class="bar-label-row"><span>Low / Info</span><span>{low_count + info_count}</span></div>
-                        <div class="bar-track"><div class="bar-fill" style="width: {((low_count + info_count) / max(total_findings, 1)) * 100}%; background: var(--accent-blue);"></div></div>
-                    </div>
+                    <span>Reconstructed events</span>
                 </div>
             </div>
 
-            <!-- Chart 2: Top Memory Consuming Processes -->
-            <div class="chart-card">
-                <div class="chart-header">
-                    <span class="chart-title">⚡ Top Memory Consumers</span>
-                    <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Live Processes</span>
+            <div class="kpi-card">
+                <div class="kpi-header">
+                    <span class="kpi-title">Extraction Status</span>
                 </div>
-                <div class="bar-chart-container" id="topProcessesChart">
-                    <!-- Populated dynamically via JS -->
+                <div class="kpi-value">READY</div>
+                <div class="kpi-subtext">
+                    <span>Evidence Manifest Verified</span>
                 </div>
             </div>
         </section>
@@ -1105,104 +1044,12 @@ def write_html_report(output_dir, case_info=None):
         <!-- WORKSPACE LAYOUT -->
         <section class="workspace-layout">
 
-            <!-- SIDEBAR NAV -->
-            <aside class="sidebar-nav">
+            <!-- SIDEBAR NAV (DYNAMICALLY GENERATED) -->
+            <aside class="sidebar-nav" id="sidebarNav">
                 <div class="search-box">
-                    <span class="search-icon">🔍</span>
                     <input type="text" id="globalSearch" placeholder="Filter tabs..." oninput="filterTabs()">
                 </div>
-
-                <div class="nav-category-title">Core Analysis</div>
-                <button class="tab-button active" onclick="switchTab('findings.json', this)">
-                    <span class="tab-label-group"><span>🛡️</span> Threat Findings</span>
-                    <span class="tab-badge">{total_findings}</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('timeline.json', this)">
-                    <span class="tab-label-group"><span>⏳</span> Master Timeline</span>
-                    <span class="tab-badge">{len(timeline_data)}</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('system_info.json', this)">
-                    <span class="tab-label-group"><span>💻</span> System & Specs</span>
-                    <span class="tab-badge">Specs</span>
-                </button>
-
-                <div class="nav-category-title">Telemetry & Execution</div>
-                <button class="tab-button" onclick="switchTab('processes.json', this)">
-                    <span class="tab-label-group"><span>⚡</span> Processes & Hashes</span>
-                    <span class="tab-badge">{len(processes_data)}</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('powershell_history.json', this)">
-                    <span class="tab-label-group"><span>📜</span> PowerShell History</span>
-                    <span class="tab-badge">Commands</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('execution_history.json', this)">
-                    <span class="tab-label-group"><span>⚡</span> Execution (Prefetch/BAM)</span>
-                    <span class="tab-badge">Apps</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('network_connections.json', this)">
-                    <span class="tab-label-group"><span>🌐</span> Network Sockets</span>
-                    <span class="tab-badge">{len(network_data)}</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('persistence.json', this)">
-                    <span class="tab-label-group"><span>⏰</span> Persistence & RunKeys</span>
-                    <span class="tab-badge">Autoruns</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('event_logs.json', this)">
-                    <span class="tab-label-group"><span>📜</span> Security Event Logs</span>
-                    <span class="tab-badge">Logs</span>
-                </button>
-
-                <div class="nav-category-title">User & Activity</div>
-                <button class="tab-button" onclick="switchTab('browser_history.json', this)">
-                    <span class="tab-label-group"><span>🧭</span> Browser History</span>
-                    <span class="tab-badge">Web</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('browser_downloads.json', this)">
-                    <span class="tab-label-group"><span>📥</span> Downloads History</span>
-                    <span class="tab-badge">Files</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('usb_history.json', this)">
-                    <span class="tab-label-group"><span>🔌</span> USB Storage Devices</span>
-                    <span class="tab-badge">{len(usb_data)}</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('recent_files.json', this)">
-                    <span class="tab-label-group"><span>📂</span> Recent Files / LNK</span>
-                    <span class="tab-badge">Recent</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('users.json', this)">
-                    <span class="tab-label-group"><span>👥</span> Users & Privileges</span>
-                    <span class="tab-badge">Accounts</span>
-                </button>
-
-                <div class="nav-category-title">System Inventory & Security</div>
-                <button class="tab-button" onclick="switchTab('scheduled_tasks.json', this)">
-                    <span class="tab-label-group"><span>📅</span> Scheduled Tasks</span>
-                    <span class="tab-badge">Tasks</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('services.json', this)">
-                    <span class="tab-label-group"><span>🛠️</span> System Services</span>
-                    <span class="tab-badge">Services</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('firewall_rules.json', this)">
-                    <span class="tab-label-group"><span>🔥</span> Firewall Rules</span>
-                    <span class="tab-badge">Rules</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('system_drivers.json', this)">
-                    <span class="tab-label-group"><span>⚙️</span> Kernel Drivers</span>
-                    <span class="tab-badge">Drivers</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('rdp_history.json', this)">
-                    <span class="tab-label-group"><span>🌐</span> Remote & RDP Sessions</span>
-                    <span class="tab-badge">Remote</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('installed_apps.json', this)">
-                    <span class="tab-label-group"><span>📦</span> Installed Software</span>
-                    <span class="tab-badge">Apps</span>
-                </button>
-                <button class="tab-button" onclick="switchTab('manifest.json', this)">
-                    <span class="tab-label-group"><span>🔒</span> Evidence Manifest</span>
-                    <span class="tab-badge">SHA256</span>
-                </button>
+                <div id="dynamicTabsArea"></div>
             </aside>
 
             <!-- CONTENT PANEL -->
@@ -1218,7 +1065,7 @@ def write_html_report(output_dir, case_info=None):
         <div class="modal-box">
             <div class="modal-header">
                 <h3 id="inspectorTitle">Record Details</h3>
-                <button class="modal-close" onclick="closeInspector()">✕</button>
+                <button class="modal-close" onclick="closeInspector()">X</button>
             </div>
             <div class="modal-body" id="inspectorBody"></div>
         </div>
@@ -1228,9 +1075,9 @@ def write_html_report(output_dir, case_info=None):
     <div class="modal-overlay" id="spotlightModal">
         <div class="modal-box">
             <div class="spotlight-input-row">
-                <span style="font-size: 18px; color: var(--accent-cyan);">🔍</span>
-                <input type="text" id="spotlightInput" placeholder="Search anything across all artifacts (IP, Hash, Process, Port, Command)..." oninput="runSpotlightSearch(this.value)">
-                <button class="modal-close" onclick="closeSpotlight()">✕</button>
+                <span style="font-size: 16px; color: var(--accent-cyan); font-weight: bold;">FIND:</span>
+                <input type="text" id="spotlightInput" placeholder="Search anything across all artifacts (IP, Hash, Command, User, Port)..." oninput="runSpotlightSearch(this.value)">
+                <button class="modal-close" onclick="closeSpotlight()">X</button>
             </div>
             <div class="spotlight-results" id="spotlightResults">
                 <p style="padding: 20px; color: var(--text-muted); text-align: center;">Type at least 2 characters to search across all collected telemetry.</p>
@@ -1240,7 +1087,7 @@ def write_html_report(output_dir, case_info=None):
 
     <!-- FOOTER -->
     <footer>
-        Artifact Collector 2.0 • Created by Azaki • Digital Forensics & Incident Response Triage Report
+        Artifact Collector • Created by Azaki • Digital Forensics & Incident Response Triage Report
     </footer>
 
     <!-- INLINE SCRIPTS & EMBEDDED DATA -->
@@ -1261,10 +1108,90 @@ def write_html_report(output_dir, case_info=None):
             "local_port", "remote_port", "num_threads", "cpu_percent", "memory_percent", "last_execution_time"
         ]);
 
-        function init() {{
-            renderTopProcessesChart();
+        function buildSidebar() {{
+            const tabsArea = document.getElementById("dynamicTabsArea");
+            if (!tabsArea) return;
 
-            // Setup keyboard shortcut Ctrl+K
+            // Group existing artifacts dynamically
+            const groups = {{
+                "Core Analysis": ["findings.json", "timeline.json", "image_info.json", "system_info.json", "manifest.json"],
+                "Extracted Evidence & Commands": ["linux_shell_history.json", "powershell_history.json", "ad1_artifacts_carved.json", "execution_history.json", "recent_files.json", "filesystem_artifacts.json"],
+                "User Activity & Authentication": ["users.json", "linux_ssh_artifacts.json", "browser_history.json", "browser_downloads.json", "event_logs.json", "rdp_history.json"],
+                "System & Inventory": ["processes.json", "network_connections.json", "persistence.json", "scheduled_tasks.json", "services.json", "system_drivers.json", "firewall_rules.json", "installed_apps.json", "usb_history.json"]
+            }};
+
+            let renderedKeys = new Set();
+            let html = "";
+
+            for (const [groupTitle, expectedNames] of Object.entries(groups)) {{
+                const matched = ARTIFACTS.filter(a => expectedNames.includes(a.name) || expectedNames.includes(a.filename));
+                if (matched.length > 0) {{
+                    html += `<div class="nav-category-title">${{groupTitle}}</div>`;
+                    matched.forEach(art => {{
+                        renderedKeys.add(art.name);
+                        const label = formatTabName(art.name);
+                        const badgeText = art.count > 0 ? art.count : art.size_formatted;
+                        html += `
+                            <button class="tab-button" id="tab_${{escapeHtml(art.name)}}" onclick="switchTab('${{escapeHtml(art.name)}}', this)">
+                                <span class="tab-label-group">${{escapeHtml(label)}}</span>
+                                <span class="tab-badge">${{escapeHtml(String(badgeText))}}</span>
+                            </button>
+                        `;
+                    }});
+                }}
+            }}
+
+            // Render any remaining custom carved or extra artifacts
+            const others = ARTIFACTS.filter(a => !renderedKeys.has(a.name) && !a.name.endsWith(".csv"));
+            if (others.length > 0) {{
+                html += `<div class="nav-category-title">Carved & Other Artifacts</div>`;
+                others.forEach(art => {{
+                    const label = formatTabName(art.name);
+                    const badgeText = art.count > 0 ? art.count : art.size_formatted;
+                    html += `
+                        <button class="tab-button" id="tab_${{escapeHtml(art.name)}}" onclick="switchTab('${{escapeHtml(art.name)}}', this)">
+                            <span class="tab-label-group">${{escapeHtml(label)}}</span>
+                            <span class="tab-badge">${{escapeHtml(String(badgeText))}}</span>
+                        </button>
+                    `;
+                }});
+            }}
+
+            tabsArea.innerHTML = html;
+        }}
+
+        function formatTabName(name) {{
+            const map = {{
+                "findings.json": "Threat Findings",
+                "timeline.json": "Master Timeline",
+                "system_info.json": "System & Hardware Specs",
+                "image_info.json": "Evidence Image Specs",
+                "manifest.json": "Evidence Manifest",
+                "linux_shell_history.json": "Shell History & Commands",
+                "powershell_history.json": "PowerShell History",
+                "ad1_artifacts_carved.json": "AD1 Carved Artifacts",
+                "execution_history.json": "Execution Evidence",
+                "users.json": "Users & Privileges",
+                "linux_ssh_artifacts.json": "SSH Keys & Auth",
+                "browser_history.json": "Browser History",
+                "browser_downloads.json": "Browser Downloads",
+                "processes.json": "Processes & Hashes",
+                "network_connections.json": "Network Sockets",
+                "persistence.json": "Persistence & Autoruns",
+                "scheduled_tasks.json": "Scheduled Tasks",
+                "services.json": "System Services",
+                "system_drivers.json": "Kernel Drivers",
+                "firewall_rules.json": "Firewall Rules",
+                "installed_apps.json": "Installed Software",
+                "usb_history.json": "USB Storage Devices",
+                "recent_files.json": "Recent Files"
+            }};
+            return map[name] || name.replace(".json", "").replace(/_/g, " ");
+        }}
+
+        function init() {{
+            buildSidebar();
+
             window.addEventListener("keydown", function(e) {{
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {{
                     e.preventDefault();
@@ -1276,40 +1203,15 @@ def write_html_report(output_dir, case_info=None):
                 }}
             }});
 
-            const defaultKey = "findings.json";
-            const found = ARTIFACTS.find(a => a.name === defaultKey) || ARTIFACTS[0];
-            if (found) {{
-                renderArtifact(found);
+            // Find first artifact that has data
+            let defaultArt = ARTIFACTS.find(a => (a.name === "findings.json" || a.name === "linux_shell_history.json" || a.name === "ad1_artifacts_carved.json") && a.count > 0) ||
+                             ARTIFACTS.find(a => a.count > 0 && a.name.endsWith(".json")) ||
+                             ARTIFACTS[0];
+
+            if (defaultArt) {{
+                const btn = document.getElementById("tab_" + defaultArt.name);
+                switchTab(defaultArt.name, btn);
             }}
-        }}
-
-        function renderTopProcessesChart() {{
-            const procArt = ARTIFACTS.find(a => a.name === "processes.json");
-            if (!procArt || !Array.isArray(procArt.data)) return;
-
-            const sorted = [...procArt.data]
-                .filter(p => p.memory_rss > 0)
-                .sort((a, b) => (b.memory_rss || 0) - (a.memory_rss || 0))
-                .slice(0, 4);
-
-            const maxMem = sorted[0]?.memory_rss || 1;
-            const container = document.getElementById("topProcessesChart");
-            if (!container) return;
-
-            container.innerHTML = sorted.map(p => {{
-                const pct = Math.round((p.memory_rss / maxMem) * 100);
-                return `
-                    <div class="bar-item">
-                        <div class="bar-label-row">
-                            <span>${{escapeHtml(p.name)}} (PID ${{p.pid}})</span>
-                            <span>${{p.memory_rss_formatted}} (${{p.memory_percent}}%)</span>
-                        </div>
-                        <div class="bar-track">
-                            <div class="bar-fill" style="width: ${{pct}}%; background: var(--accent-cyan);"></div>
-                        </div>
-                    </div>
-                `;
-            }}).join("");
         }}
 
         function toggleTheme() {{
@@ -1320,21 +1222,16 @@ def write_html_report(output_dir, case_info=None):
 
         function switchTab(name, btn) {{
             document.querySelectorAll(".tab-button").forEach(b => b.classList.remove("active"));
-            if (btn) btn.classList.add("active");
+            if (btn) {{
+                btn.classList.add("active");
+            }} else {{
+                const b = document.getElementById("tab_" + name);
+                if (b) b.classList.add("active");
+            }}
 
             const art = ARTIFACTS.find(a => a.name === name || a.filename === name);
             if (art) {{
                 renderArtifact(art);
-            }} else {{
-                document.getElementById("panelArea").innerHTML = `
-                    <div class="panel-header">
-                        <div class="panel-title">
-                            <h2>${{name}}</h2>
-                            <p>No records found or module was not executed.</p>
-                        </div>
-                    </div>
-                    <p style="color: var(--text-muted); padding: 20px;">This artifact was not present in the current triage run.</p>
-                `;
             }}
         }}
 
@@ -1373,7 +1270,7 @@ def write_html_report(output_dir, case_info=None):
                 area.innerHTML = `
                     <div class="panel-header">
                         <div class="panel-title">
-                            <h2>${{art.name}}</h2>
+                            <h2>${{formatTabName(art.name)}}</h2>
                             <p>0 records collected.</p>
                         </div>
                     </div>
@@ -1387,13 +1284,13 @@ def write_html_report(output_dir, case_info=None):
             let headerHtml = `
                 <div class="panel-header">
                     <div class="panel-title">
-                        <h2>${{art.name}}</h2>
+                        <h2>${{formatTabName(art.name)}}</h2>
                         <p>${{rows.length}} total items • File size: ${{art.size_formatted}}</p>
                     </div>
                     <div class="panel-controls">
                         <input type="text" class="table-filter-input" placeholder="Filter rows..." oninput="filterTableRows(this.value)">
-                        <button class="btn-action" onclick="exportCurrentCSV()">📥 CSV</button>
-                        <button class="btn-action" onclick="exportCurrentJSON()">📋 JSON</button>
+                        <button class="btn-action" onclick="exportCurrentCSV()">CSV</button>
+                        <button class="btn-action" onclick="exportCurrentJSON()">JSON</button>
                     </div>
                 </div>
                 <div class="table-responsive" id="tableContainer">
@@ -1435,38 +1332,22 @@ def write_html_report(output_dir, case_info=None):
                     if (val === null || val === undefined) val = "";
                     let displayVal = String(val);
 
-                    // ID Badge
                     if (c === "id") {{
                         return `<td class="nowrap"><span class="badge-id">${{escapeHtml(displayVal)}}</span></td>`;
                     }}
-
-                    // Severity Badge
                     if (c === "severity") {{
                         const s = String(val).toLowerCase();
                         return `<td class="nowrap"><span class="sev-pill sev-${{s}}">${{displayVal}}</span></td>`;
                     }}
-
-                    // MITRE Technique
                     if (c === "mitre_technique") {{
                         return `<td class="nowrap"><span class="code-cell">${{escapeHtml(displayVal)}}</span></td>`;
                     }}
-
-                    // Suspicious flag styling
-                    if (c === "is_suspicious" && val === true) {{
-                        return `<td class="highlight-danger">⚠️ YES</td>`;
-                    }}
-                    if (c === "unquoted_path_vuln" && val === true) {{
-                        return `<td class="highlight-danger">🚨 VULNERABLE</td>`;
-                    }}
-
-                    // Code / Hash styling
                     if (c === "sha256" || c === "md5") {{
                         return `<td><span class="code-cell" style="word-break: break-all; white-space: normal;">${{displayVal}}</span></td>`;
                     }}
                     if (c === "pid" || c === "ppid") {{
                         return `<td class="nowrap"><span class="code-cell">${{displayVal}}</span></td>`;
                     }}
-
                     if (NOWRAP_COLS.has(c)) {{
                         return `<td class="nowrap">${{escapeHtml(displayVal)}}</td>`;
                     }}
@@ -1488,7 +1369,7 @@ def write_html_report(output_dir, case_info=None):
             const title = document.getElementById("inspectorTitle");
             const body = document.getElementById("inspectorBody");
 
-            title.innerText = `${{currentArtifact.filename}} • Record #${{rowIdx + 1}}`;
+            title.innerText = `${{formatTabName(currentArtifact.name)}} • Record #${{rowIdx + 1}}`;
 
             let html = "";
             for (const [k, v] of Object.entries(row)) {{
@@ -1511,7 +1392,6 @@ def write_html_report(output_dir, case_info=None):
             document.getElementById("inspectorModal").classList.remove("open");
         }}
 
-        /* SPOTLIGHT SEARCH */
         function openSpotlight() {{
             const modal = document.getElementById("spotlightModal");
             modal.classList.add("open");
@@ -1564,7 +1444,7 @@ def write_html_report(output_dir, case_info=None):
                         <div style="font-weight: 700; color: var(--text-primary); font-size: 13px;">${{escapeHtml(String(m.summary))}}</div>
                         <div style="font-size: 11px; color: var(--accent-cyan);">${{escapeHtml(m.matchedKey)}}: ${{escapeHtml(String(m.value).slice(0, 100))}}</div>
                     </div>
-                    <span class="tab-badge">${{escapeHtml(m.artifact)}}</span>
+                    <span class="tab-badge">${{escapeHtml(formatTabName(m.artifact))}}</span>
                 </div>
             `).join("");
         }}
@@ -1616,15 +1496,37 @@ def write_html_report(output_dir, case_info=None):
 
         function renderJsonObject(art) {{
             const area = document.getElementById("panelArea");
+            const data = art.data || {{}};
+            const keys = Object.keys(data);
+
+            let tableRowsHtml = "";
+            for (const k of keys) {{
+                const v = data[k];
+                const valStr = typeof v === "object" ? JSON.stringify(v, null, 2) : String(v);
+                tableRowsHtml += `
+                    <tr>
+                        <td class="nowrap" style="font-weight: 700; color: var(--accent-cyan); width: 240px; vertical-align: top;">${{escapeHtml(k)}}</td>
+                        <td><span class="code-cell" style="white-space: pre-wrap; word-break: break-all; display: block; font-size: 12px;">${{escapeHtml(valStr)}}</span></td>
+                    </tr>
+                `;
+            }}
+
             area.innerHTML = `
                 <div class="panel-header">
                     <div class="panel-title">
-                        <h2>${{art.name}}</h2>
-                        <p>Structured JSON Telemetry • Size: ${{art.size_formatted}}</p>
+                        <h2>${{formatTabName(art.name)}}</h2>
+                        <p>${{keys.length}} Properties • Size: ${{art.size_formatted}}</p>
                     </div>
-                    <button class="btn-action" onclick="navigator.clipboard.writeText(JSON.stringify(currentArtifact.data, null, 2))">📋 Copy JSON</button>
+                    <div class="panel-controls">
+                        <button class="btn-action" onclick="navigator.clipboard.writeText(JSON.stringify(currentArtifact.data, null, 2))">Copy JSON</button>
+                    </div>
                 </div>
-                <pre class="raw-json">${{escapeHtml(JSON.stringify(art.data, null, 2))}}</pre>
+                <div class="table-responsive">
+                    <table>
+                        <thead><tr><th style="width: 240px;">Property</th><th>Value</th></tr></thead>
+                        <tbody>${{tableRowsHtml}}</tbody>
+                    </table>
+                </div>
             `;
         }}
 
@@ -1640,7 +1542,7 @@ def write_html_report(output_dir, case_info=None):
             area.innerHTML = `
                 <div class="panel-header">
                     <div class="panel-title">
-                        <h2>${{art.name}}</h2>
+                        <h2>${{formatTabName(art.name)}}</h2>
                         <p>${{body.length}} rows • Size: ${{art.size_formatted}}</p>
                     </div>
                 </div>
@@ -1658,7 +1560,7 @@ def write_html_report(output_dir, case_info=None):
             area.innerHTML = `
                 <div class="panel-header">
                     <div class="panel-title">
-                        <h2>${{art.name}}</h2>
+                        <h2>${{formatTabName(art.name)}}</h2>
                         <p>Raw Text Output • Size: ${{art.size_formatted}}</p>
                     </div>
                 </div>

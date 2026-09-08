@@ -104,12 +104,13 @@ def extract_ad1_container(ad1_path, extract_dir, progress_cb=None):
     # 6. Windows registry hives (SYSTEM, SOFTWARE, SAM, NTUSER.DAT)
     # 7. Prefetch and EVTX event logs
 
-    artifacts_extracted = _carve_artifacts_from_stream(bytes(decompressed_data), extract_dir)
+    carved_res = _carve_artifacts_from_stream(bytes(decompressed_data), extract_dir)
 
     return {
         "raw_image": raw_extracted_img,
         "extracted_dir": extract_dir,
-        "artifacts": artifacts_extracted,
+        "artifacts": carved_res.get("artifacts", []),
+        "browser_urls": carved_res.get("browser_urls", []),
         "total_decompressed_bytes": len(decompressed_data)
     }
 
@@ -150,16 +151,49 @@ def _carve_artifacts_from_stream(stream_bytes, extract_dir):
     sqlite_header = b"SQLite format 3\x00"
     pos = 0
     db_idx = 0
+    parsed_browser_urls = []
+
     while True:
         idx = stream_bytes.find(sqlite_header, pos)
         if idx == -1 or db_idx >= 15:
             break
-        
+
         # Carve standard SQLite database (up to 4MB)
         db_data = stream_bytes[idx:idx + 4 * 1024 * 1024]
         db_path = os.path.join(extract_dir, f"carved_database_{db_idx}.sqlite")
         with open(db_path, "wb") as f:
             f.write(db_data)
+
+        # Attempt to query browser history tables from carved SQLite db
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = [t[0] for t in cursor.fetchall()]
+            for tbl in tables:
+                cursor.execute(f"PRAGMA table_info({tbl})")
+                cols = [c[1] for c in cursor.fetchall()]
+                url_col = next((c for c in cols if "url" in c.lower() or "link" in c.lower()), None)
+                title_col = next((c for c in cols if "title" in c.lower() or "name" in c.lower()), None)
+                time_col = next((c for c in cols if "time" in c.lower() or "date" in c.lower()), None)
+                if url_col:
+                    q = f"SELECT {url_col}" + (f", {title_col}" if title_col else ", ''") + (f", {time_col}" if time_col else ", ''") + f" FROM {tbl} LIMIT 100"
+                    cursor.execute(q)
+                    for r in cursor.fetchall():
+                        val = str(r[0] or "")
+                        if val and (val.startswith("http") or val.startswith("file:") or len(val) > 4):
+                            parsed_browser_urls.append({
+                                "url": val,
+                                "title": str(r[1] or "") if len(r) > 1 else "",
+                                "timestamp": str(r[2] or "") if len(r) > 2 else "",
+                                "source_table": tbl,
+                                "database": f"carved_database_{db_idx}.sqlite"
+                            })
+            conn.close()
+        except Exception:
+            pass
+
         artifacts.append({"name": f"carved_database_{db_idx}.sqlite", "path": db_path, "type": "Browser / App Database"})
         db_idx += 1
         pos = idx + 1024
@@ -172,4 +206,8 @@ def _carve_artifacts_from_stream(stream_bytes, extract_dir):
             f.write(key)
         artifacts.append({"name": f"carved_ssh_key_{s_idx}.pem", "path": k_path, "type": "SSH Private Key"})
 
-    return artifacts
+    return {
+        "artifacts": artifacts,
+        "browser_urls": parsed_browser_urls
+    }
+

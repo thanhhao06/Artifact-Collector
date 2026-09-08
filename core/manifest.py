@@ -18,32 +18,35 @@ def generate_evidence_manifest(output_dir, case_info=None):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
 
         for fname in sorted(files):
-            if fname in ["manifest.json", "checksums.sha256"] or fname.startswith("."):
+            if fname in ["manifest.json", "checksums.sha256"] or fname.startswith(".") or fname.endswith(".pyc") or fname.endswith("-wal") or fname.endswith("-shm") or fname.endswith("-journal"):
                 continue
 
             full_path = os.path.join(root, fname)
             rel_path = os.path.relpath(full_path, output_dir).replace("\\", "/")
 
             if os.path.isfile(full_path):
-                size_bytes = os.path.getsize(full_path)
-                sha256_hash = calculate_file_hash(full_path, "sha256")
-                md5_hash = calculate_file_hash(full_path, "md5")
+                try:
+                    size_bytes = os.path.getsize(full_path)
+                    sha256_hash = calculate_file_hash(full_path, "sha256")
+                    md5_hash = calculate_file_hash(full_path, "md5")
 
-                files_manifest.append({
-                    "relative_path": rel_path,
-                    "file_name": fname,
-                    "size_bytes": size_bytes,
-                    "size_formatted": format_file_size(size_bytes),
-                    "sha256": sha256_hash,
-                    "md5": md5_hash,
-                })
+                    files_manifest.append({
+                        "relative_path": rel_path,
+                        "file_name": fname,
+                        "size_bytes": size_bytes,
+                        "size_formatted": format_file_size(size_bytes),
+                        "sha256": sha256_hash,
+                        "md5": md5_hash,
+                    })
 
-                if sha256_hash:
-                    sha256_lines.append(f"{sha256_hash}  {rel_path}")
+                    if sha256_hash:
+                        sha256_lines.append(f"{sha256_hash}  {rel_path}")
+                except (OSError, IOError):
+                    continue
 
     manifest_data = {
         "tool_name": "Artifact Collector",
-        "tool_version": "2.0.0",
+        "tool_type": "Forensic Triage Engine",
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "case_metadata": {
             "case_id": case_info.get("case_id", "CASE-TRIAGE-01"),
